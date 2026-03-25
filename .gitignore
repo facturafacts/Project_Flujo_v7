@@ -1,0 +1,27 @@
+# Environment & secrets
+.env
+*.pem
+*.key
+
+# Virtual environment
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Data (ledger is local-only)
+data/ledger.db
+data/reports/
+data/legacy/
+data/mp_pos_cache.json
+data/__pycache__/
+
+# Python
+*.egg-info/
+dist/
+build/
+
+# OS
+.DS_Store
+Thumbs.db

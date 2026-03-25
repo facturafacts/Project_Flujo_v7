@@ -1,0 +1,22 @@
+Context,Direction,Subcategory
+Work,Inflow,Client Payment / Invoice
+Work,Inflow,Retainer / Consulting
+Work,Inflow,Capital Injection / Loan
+Work,Inflow,Reimbursement / Refund
+Work,Outflow,Software / Subscriptions
+Work,Outflow,Contractors / Freelancers
+Work,Outflow,Office Supplies / Tech
+Work,Outflow,Marketing / Ads
+Work,Outflow,Gasoline
+Work,Outflow,Rent
+Personal,Inflow,Wallet Top-Up (My Money)
+Personal,Inflow,Refund from Store
+Personal,Inflow,Gift / Repayment from Friends
+Personal,Outflow,Owner's Draw (Paying Myself)
+Personal,Outflow,Groceries / Food
+Personal,Outflow,Personal Shopping
+Personal,Outflow,Health / Wellness
+Personal,Outflow,Travel
+Personal,Outflow,Restaurants
+Personal,Outflow,Gasoline
+Personal,Outflow,Rent
