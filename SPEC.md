@@ -166,25 +166,95 @@ LEDGER_DB_PATH=../data/ledger.db
 
 ---
 
-## Commits Before Code
+## Full Workflow (v7 — Dual Account)
 
-- [x] SPEC.md written
-- [ ] `.env` updated with `MP_ACCESS_TOKEN_B`
-- [ ] Architecture refactored (new script structure)
-- [ ] Database migration (add source_account columns)
-- [ ] Multi-account sync scripts
-- [ ] Intercompany detection
-- [ ] Excel export/import (new UX)
-- [ ] Tested end-to-end with real tokens
+```
+# ── 1. Sync both account APIs ──────────────────────────────────
+python scripts/sync/sync_account_a.py          # Account A — incremental
+python scripts/sync/sync_account_b.py          # Account B — incremental
+python scripts/sync/sync_account_b.py --full    # Account B — full backfill (first run)
+
+# ── 2. Ingest release reports ─────────────────────────────────
+python scripts/sync/ingest_releases.py          # Both accounts
+python scripts/sync/ingest_releases.py A       # Account A only
+python scripts/sync/ingest_releases.py B       # Account B only
+
+# ── 3. Merge to ledger ─────────────────────────────────────────
+python scripts/ledger/merge.py                  # Incremental (new only)
+python scripts/ledger/merge.py --full          # Full rebuild
+
+# ── 4. Detect intercompany transfers ─────────────────────────
+python scripts/ledger/intercompany.py           # Dry run (review first!)
+python scripts/ledger/intercompany.py --apply   # Apply matches to DB
+
+# ── 5. Export to Excel ─────────────────────────────────────────
+python scripts/excel/export.py                  # Creates output/v7_labeling_YYYYMMDD_HHMM.xlsx
+
+# ── 6. Import labels ───────────────────────────────────────────
+python scripts/excel/import.py                  # Import from most recent export
+python scripts/excel/import.py output/v7_labeling_xxx.xlsx  # Specific file
+
+# ── Quick status ───────────────────────────────────────────────
+python scripts/reports/summary.py
+```
+
+
+---
+
+## Environment Setup
+
+`.env` (at root of Project_Flujo_v7/):
+```env
+MP_ACCESS_TOKEN_A=REPLACE_WITH_ACCOUNT_A_TOKEN   # Expense / Legacy account
+MP_ACCESS_TOKEN_B=REPLACE_WITH_ACCOUNT_B_TOKEN   # Concentrator / New account
+LEDGER_DB_PATH=./data/ledger.db
+```
+
+To add a new token: edit `.env` and replace the value. No code changes needed.
+
+---
+
+## Intercompany Rule
+
+**Rule:** When Account B sends money to Account A:
+1. Account **B API** shows an outbound `money_transfer` (net_received < 0)
+2. Account **A release report** shows a matching deposit on the **same date**
+3. Match on: `|net_B| ≈ net_credit_A` within **$1.00 tolerance**
+4. If the same transfer appears in **both B API and A release report** → use API data (more detail), skip/dedupe the release row
+
+**Validation:** The script runs in DRY RUN mode first — shows matches, you review, then pass `--apply`.
+
+```
+# Dry run (review first)
+python scripts/ledger/intercompany.py
+
+# Apply if matches look correct
+python scripts/ledger/intercompany.py --apply
+```
 
 ---
 
 ## Open Questions
 
-1. **Release reports for Account B** — does Account B have a linked bank account that produces release reports too? Or only Account A?
-2. **Account A release reports** — do they come from the same bank account as v6 ( BBVA / SPM )?
-3. **Intercompany transfer amount** — is it the full gross amount, or net of fees?
-4. **When do we start syncing Account B?** — today, or from a specific date?
+1. ✅ Release reports for both accounts — confirmed yes
+2. ✅ Both accounts use same bank account for releases — confirmed
+3. ✅ Net amount matching with $1.00 tolerance — confirmed
+4. ✅ Account B sync start date — today (no backfill needed for B)
+
+---
+
+## Build Status
+
+- [x] SPEC.md written
+- [x] `.env` with both token slots (Account A + Account B)
+- [x] Architecture refactored — `sync/`, `ledger/`, `excel/`, `reports/`
+- [x] `db_manager.py` — dual-account schema with `source_account` on all tables
+- [x] Multi-account sync scripts (`sync_account_a.py`, `sync_account_b.py`, `ingest_releases.py`)
+- [x] Merge script (`merge.py`) — handles both accounts
+- [x] Intercompany detection (`intercompany.py`) — dry-run by default
+- [x] Excel export (`export.py`) — 6-sheet UX with account-split sheets
+- [x] Excel import (`import.py`)
+- [ ] Tested end-to-end with real tokens
 
 ---
 
