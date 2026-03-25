@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 SCRIPT_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
-DB_PATH = os.getenv("LEDGER_DB_PATH", str(SCRIPT_DIR.parent / "data" / "ledger.db"))
+DB_PATH = os.getenv("LEDGER_DB_PATH") or str(SCRIPT_DIR.parent / "data" / "ledger.db")
 
 
 def get_connection():

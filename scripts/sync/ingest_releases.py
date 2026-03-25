@@ -1,19 +1,23 @@
 """
-Ingest Release Reports for both accounts.
+Ingest Release Reports for both accounts — v7
 
-Fetches the list of available CSV reports from:
-    GET https://api.mercadopago.com/v1/account/release_report/list
+Two modes:
+  1. INGEST MODE (default): download + ingest new CSVs from the API
+  2. SHRED MODE: parse already-downloaded CSVs in data/reports/
 
-Then downloads each CSV and shreds it into:
-    source_release_reports (tagged by source_account)
+Mercado Pago download URL:
+    GET https://api.mercadopago.com/v1/account/release_report/{file_name}
+    Authorization: Bearer {token}
 
 Usage:
-    python scripts/sync/ingest_releases.py           # both accounts
+    python scripts/sync/ingest_releases.py           # both accounts, ingest new
     python scripts/sync/ingest_releases.py A         # Account A only
-    python scripts/sync/ingest_releases.py B          # Account B only
+    python scripts/sync/ingest_releases.py B         # Account B only
+    python scripts/sync/ingest_releases.py --shred A  # shred existing CSVs, tag as A
 """
-import os, requests, csv, sys, io, time
+import os, requests, csv, sys, io, time, glob
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from dotenv import load_dotenv
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -21,12 +25,17 @@ from data.db_manager import init_db, insert_release_reports_batch, get_last_rele
 
 load_dotenv()
 
-MEX_TZ  = timezone(timedelta(hours=-6))
-ACCOUNTS = sys.argv[1:] if len(sys.argv) > 1 else ["A", "B"]
-REPORT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "reports")
+MEX_TZ    = timezone(timedelta(hours=-6))
+BASE_URL  = "https://api.mercadopago.com/v1"
+REPORTS_DIR = Path(__file__).parent.parent.parent / "data" / "reports"
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
-os.makedirs(REPORT_DIR, exist_ok=True)
+ACCOUNTS   = sys.argv[1:] if len(sys.argv) > 1 else ["A", "B"]
+SHRED_MODE = "--shred" in ACCOUNTS
+ACCOUNTS   = [a for a in ACCOUNTS if a not in ("--shred", "--shred-only")]
 
+
+# ── Helpers ────────────────────────────────────────────────────
 
 def get_token(account):
     token = os.getenv(f"MP_ACCESS_TOKEN_{account}")
@@ -36,66 +45,103 @@ def get_token(account):
     return token
 
 
-def list_reports(token, account):
-    url = "https://api.mercadopago.com/v1/account/release_report/list"
-    params = {"access_token": token}
-    try:
-        r = requests.get(url, params=params, timeout=30)
-        r.raise_for_status()
-        return r.json().get("files", [])
-    except Exception as e:
-        print(f"  ❌ Failed to list reports for {account}: {e}")
+def list_reports(token):
+    resp = requests.get(
+        f"{BASE_URL}/account/release_report/list",
+        params={"access_token": token},
+        timeout=30
+    )
+    if resp.status_code != 200:
+        print(f"  ❌ List error {resp.status_code}: {resp.text[:150]}")
+        return []
+    return resp.json()   # returns a LIST directly
+
+
+def download_csv(file_name, token):
+    resp = requests.get(
+        f"{BASE_URL}/account/release_report/{file_name}",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=60
+    )
+    if resp.status_code != 200:
+        print(f"  ❌ Download failed {resp.status_code}: {file_name}")
+        return None
+    return resp.text
+
+
+def parse_csv(text):
+    """Detect delimiter and parse CSV into dicts."""
+    text = text.strip()
+    if not text:
         return []
 
-
-def download_and_parse(csv_url, token):
-    resp = requests.get(csv_url, params={"access_token": token}, timeout=60)
-    resp.raise_for_status()
-    text = resp.text.strip()
-
-    # Detect delimiter
     sample = text[:500]
     if ";" in sample and "," not in sample:
-        delimiter = ";"
+        delim = ";"
     elif "\t" in sample:
-        delimiter = "\t"
+        delim = "\t"
     else:
-        delimiter = ","
+        delim = ","
 
     rows = []
-    for line in csv.DictReader(io.StringIO(text), delimiter=delimiter):
-        # Normalize field names
-        source_id  = line.get("id") or line.get("source_id") or line.get("release_id", "").strip()
-        date       = line.get("date") or line.get("date_created") or line.get("transaction_date", "").strip()
-        desc_raw   = line.get("description") or line.get("transaction_description") or ""
-        gross_raw  = line.get("gross_amount") or line.get("gross") or line.get("amount") or "0"
-        credit_raw = line.get("net_credit_amount") or line.get("net_credit") or line.get("credit") or "0"
-        debit_raw  = line.get("net_debit_amount") or line.get("net_debit") or line.get("debit") or "0"
+    for line in csv.DictReader(io.StringIO(text), delimiter=delim):
+        normalized = {k.upper().strip(): v for k, v in line.items() if k}
+        source_id = (
+            normalized.get("SOURCE_ID") or normalized.get("SOURCEID")
+            or normalized.get("ID") or ""
+        ).strip()
+        if not source_id:
+            continue
 
-        try:
-            gross   = float(gross_raw.replace(",", "").replace("$", "").replace(" ", ""))
-        except (ValueError, AttributeError):
-            gross = 0.0
-        try:
-            credit = float(credit_raw.replace(",", "").replace("$", "").replace(" ", ""))
-        except (ValueError, AttributeError):
-            credit = 0.0
-        try:
-            debit  = float(debit_raw.replace(",", "").replace("$", "").replace(" ", ""))
-        except (ValueError, AttributeError):
-            debit = 0.0
+        def f(val):
+            if val is None:
+                return 0.0
+            try:
+                return float(str(val).replace(",", "").replace("$", "").replace(" ", ""))
+            except Exception:
+                return 0.0
 
         rows.append({
             "source_id":          source_id,
-            "date":               date,
-            "description":        desc_raw,
-            "gross_amount":       gross,
-            "net_credit_amount":  credit,
-            "net_debit_amount":   debit,
-            "raw_csv_row":        line.get("raw_row", ""),
+            "date":               (normalized.get("TRANSACTION_DATE") or normalized.get("DATE") or "")[:10],
+            "description":        (normalized.get("DESCRIPTION") or "Unknown").strip(),
+            "gross_amount":       f(normalized.get("GROSS_AMOUNT")),
+            "net_credit_amount":  f(normalized.get("NET_CREDIT_AMOUNT")),
+            "net_debit_amount":  f(normalized.get("NET_DEBIT_AMOUNT")),
+            "raw_csv_row":        "",
         })
     return rows
 
+
+# ── Shred existing CSV files ────────────────────────────────────
+
+def shred_existing_csvs(account):
+    """Parse CSVs already on disk and ingest them as source_account."""
+    csv_files = sorted(REPORTS_DIR.glob("*.csv"))
+    if not csv_files:
+        print(f"  No CSV files found in {REPORTS_DIR}.")
+        return 0
+
+    total = 0
+    for csv_path in csv_files:
+        try:
+            text = csv_path.read_text(encoding="utf-8", errors="replace")
+        except Exception as e:
+            print(f"  ❌ Could not read {csv_path.name}: {e}")
+            continue
+
+        rows = parse_csv(text)
+        if not rows:
+            continue
+
+        insert_release_reports_batch(rows, account)
+        total += len(rows)
+        print(f"  ✅ {csv_path.name}: +{len(rows)} rows")
+
+    return total
+
+
+# ── Ingest new from API ─────────────────────────────────────────
 
 def ingest_account(account):
     token = get_token(account)
@@ -103,40 +149,48 @@ def ingest_account(account):
         return 0
 
     print(f"\n📥  Account {account} — release reports\n")
-    files = list_reports(token, account)
+
+    if SHRED_MODE:
+        print(f"  🔄 Shred mode — parsing existing CSVs in {REPORTS_DIR}")
+        total = shred_existing_csvs(account)
+        print(f"\n✅  Account {account}: +{total} rows from existing CSVs.")
+        return total
+
+    # Normal: list → download → ingest
+    files = list_reports(token)
     if not files:
         print(f"  No reports found for {account}.")
         return 0
 
     total = 0
     for f in files:
-        fname = f.get("name") or f.get("file_name") or "unknown"
-        created = f.get("created") or ""
+        fname = f.get("file_name") or "unknown"
+        status = f.get("status", "")
+        created = f.get("date_created", "")[:10]
+
+        # Only download enabled (finished) reports
+        if status != "enabled":
+            continue
+
+        out_path = REPORTS_DIR / f"{account}_{fname}"
+        if out_path.exists():
+            print(f"  ✓  {fname} — already downloaded, skipping.")
+            continue
+
         print(f"  ▶  {fname}  ({created})")
-
-        # Skip if already downloaded (basic dedup by filename)
-        out_path = os.path.join(REPORT_DIR, f"{account}_{fname}")
-        if os.path.exists(out_path):
-            print(f"     ✓ already downloaded — skipping.")
+        content = download_csv(fname, token)
+        if not content:
             continue
 
-        csv_url = f.get("url") or f.get("file_url")
-        if not csv_url:
-            print(f"     ⚠ no URL found in file entry.")
-            continue
+        rows = parse_csv(content)
+        if rows:
+            insert_release_reports_batch(rows, account)
+            total += len(rows)
+            print(f"     ✅ +{len(rows)} rows ingested.")
 
-        try:
-            parsed = download_and_parse(csv_url, token)
-        except Exception as e:
-            print(f"     ❌ download failed: {e}")
-            continue
-
-        insert_release_reports_batch(parsed, account)
-        with open(out_path, "w") as fh:
-            fh.write(f"# Downloaded: {datetime.now(MEX_TZ)}\n# URL: {csv_url}\n")
-        total += len(parsed)
-        print(f"     ✅ +{len(parsed)} rows ingested.")
-        time.sleep(0.5)
+        with open(out_path, "w", encoding="utf-8") as fh:
+            fh.write(f"# Downloaded: {datetime.now(MEX_TZ)}\n")
+        time.sleep(0.3)
 
     now_str = datetime.now(MEX_TZ).strftime("%Y-%m-%dT%H:%M:%S%z")
     set_last_release_sync(account, now_str, f"{total} rows from {len(files)} reports")
@@ -144,9 +198,11 @@ def ingest_account(account):
     return total
 
 
+# ── Main ────────────────────────────────────────────────────────
+
 if __name__ == "__main__":
     init_db()
     grand = 0
-    for acc in ACCOUNTS:
-        grand += ingest_account(acc.upper())
+    for acc in [a.upper() for a in ACCOUNTS]:
+        grand += ingest_account(acc)
     print(f"\n🎉 All done — +{grand} rows across {len(ACCOUNTS)} account(s).\n")
