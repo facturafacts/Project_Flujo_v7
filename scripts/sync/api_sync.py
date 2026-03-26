@@ -23,7 +23,13 @@ from data.db_manager import init_db, insert_api_payments_batch, get_last_sync, s
 load_dotenv()
 
 # ── Config ──────────────────────────────────────────────────────
-ACCOUNT = sys.argv[1].upper() if len(sys.argv) > 1 else "A"
+# When imported by sync_account_a.py or sync_account_b.py, ACCOUNT is set
+# before run_sync() is called. Only parse CLI args when run directly.
+if __name__ == "__main__":
+    ACCOUNT = sys.argv[1].upper() if len(sys.argv) > 1 else "A"
+else:
+    if "ACCOUNT" not in dir():
+        ACCOUNT = "A"   # safe default if used incorrectly
 TOKEN_KEY = f"MP_ACCESS_TOKEN_{ACCOUNT}"
 MP_ACCESS_TOKEN = os.getenv(TOKEN_KEY)
 
