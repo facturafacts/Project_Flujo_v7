@@ -64,24 +64,60 @@ When Account B sends money to Account A:
 
 ---
 
-## Database Schema Changes
+## Database Schema (v7 — per-account source tables)
 
-### `source_api_payments`
+### `source_api_payments_A` / `source_api_payments_B`
 ```sql
-ALTER TABLE source_api_payments ADD COLUMN source_account TEXT; -- 'A' or 'B'
+-- Primary key: internal_id (MP payment ID)
+-- No source_account column — table name IS the account
+internal_id           TEXT PRIMARY KEY,
+date_created          TEXT,
+date_approved         TEXT,
+operation_type        TEXT,
+payment_type_id       TEXT,
+status                TEXT,
+status_detail         TEXT,
+description           TEXT,
+transaction_amount    REAL,
+net_received_amount   REAL,
+fee_amount            REAL,
+payer_email           TEXT,
+payment_method_id     TEXT,
+collector_id          INTEGER,   -- NULL = purchase, set = sale
+payer_id              INTEGER,
+raw_json              TEXT
 ```
 
-### `source_release_reports`
+### `source_release_reports_A` / `source_release_reports_B`
 ```sql
-ALTER TABLE source_release_reports ADD COLUMN source_account TEXT;  -- 'A' or 'B'
-ALTER TABLE source_release_reports ADD COLUMN intercompany INTEGER DEFAULT 0;
-ALTER TABLE source_release_reports ADD COLUMN counterpart_account TEXT;  -- 'A' or 'B'
+-- Primary key: source_id (release report row ID)
+-- No source_account column — table name IS the account
+source_id             TEXT PRIMARY KEY,
+date                  TEXT,
+description           TEXT,
+gross_amount          REAL,       -- negative for outflows
+net_credit_amount     REAL,
+net_debit_amount      REAL,
+intercompany          INTEGER DEFAULT 0,
+counterpart_account   TEXT,       -- set when matched as intercompany
+raw_csv_row           TEXT
 ```
 
 ### `ledger_final`
 ```sql
-ALTER TABLE ledger_final ADD COLUMN source_account TEXT;
-ALTER TABLE ledger_final ADD COLUMN intercompany INTEGER DEFAULT 0;
+-- Keeps source_account column to identify origin
+internal_id        TEXT PRIMARY KEY,
+source_account     TEXT NOT NULL,   -- 'A' or 'B'
+date               TEXT,
+category           TEXT,
+subcategory        TEXT,
+classification     TEXT,            -- 'Work' or 'Personal'
+description        TEXT,
+gross_amount       REAL,            -- negative for outflows
+mp_fee             REAL,
+net_amount         REAL,            -- negative for outflows
+source             TEXT,            -- 'api' or 'release'
+intercompany       INTEGER DEFAULT 0
 ```
 
 ---
@@ -248,14 +284,15 @@ python scripts/ledger/intercompany.py --apply
 - [x] SPEC.md written
 - [x] `.env` with both token slots (Account A + Account B)
 - [x] Architecture refactored — `sync/`, `ledger/`, `excel/`, `reports/`
-- [x] `db_manager.py` — dual-account schema with `source_account` on all tables
+- [x] `db_manager.py` — per-account schema (separate tables per account)
+- [x] Migration: flat → per-account tables ✅ (2026-03-26)
 - [x] Multi-account sync scripts (`sync_account_a.py`, `sync_account_b.py`, `ingest_releases.py`)
-- [x] Merge script (`merge.py`) — handles both accounts
-- [x] Intercompany detection (`intercompany.py`) — dry-run by default
+- [x] Merge script (`merge.py`) — reads from per-account tables
+- [x] Intercompany detection (`intercompany.py`) — queries per-account tables
 - [x] Excel export (`export.py`) — 6-sheet UX with account-split sheets
 - [x] Excel import (`import.py`)
-- [ ] Tested end-to-end with real tokens
+- [x] Tested end-to-end with real tokens ✅
 
 ---
 
-_Last updated: 2026-03-25_
+_Last updated: 2026-03-26_

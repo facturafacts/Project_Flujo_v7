@@ -54,9 +54,8 @@ def run_detection():
         SELECT internal_id, date_created, description,
                transaction_amount, net_received_amount, fee_amount,
                collector_id
-        FROM source_api_payments
-        WHERE source_account = 'B'
-          AND operation_type = 'money_transfer'
+        FROM source_api_payments_B
+        WHERE operation_type = 'money_transfer'
           AND (net_received_amount < 0 OR transaction_amount < 0)
     """)
     b_outbound = cur.fetchall()
@@ -66,9 +65,8 @@ def run_detection():
     cur.execute("""
         SELECT source_id, date, description, gross_amount,
                net_credit_amount, intercompany
-        FROM source_release_reports
-        WHERE source_account = 'A'
-          AND gross_amount > 0
+        FROM source_release_reports_A
+        WHERE gross_amount > 0
     """)
     a_inbound = cur.fetchall()
     print(f"📥  Account A release deposits (A←?): {len(a_inbound)} candidates\n")
@@ -134,9 +132,9 @@ def run_detection():
     if not DRY_RUN:
         print("\n🔨  Applying changes...")
         for b_id, b_date, a_sid, b_gross, b_net, b_fee, b_desc in matched_b:
-            mark_intercompany_release(a_sid, "B")
-            mark_intercompany_ledger(b_id, "B")
-            mark_intercompany_ledger(a_sid, "A")
+            mark_intercompany_release(a_sid, "A", "B")   # mark A release row
+            mark_intercompany_ledger(b_id, "B")         # mark B ledger entry
+            mark_intercompany_ledger(a_sid, "A")        # mark A ledger entry
             print(f"   ✅ {a_sid} ← marked intercompany (B counterpart: {b_id})")
         print("\n✅  Intercompany detection applied.")
     else:
