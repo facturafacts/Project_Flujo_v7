@@ -89,7 +89,7 @@ def merge_api(account, full=False):
     new_rows = [r for r in rows if r[0] not in already]
 
     for r in new_rows:
-        (iid, date_c, op, desc, gross, fee, net, coll, sa) = r
+        (iid, date_c, op, desc, gross, fee, net, coll) = r
         sign_gross, sign_fee, sign_net, cat = api_sign({
             "operation_type":       op,
             "collector_id":         coll,
@@ -99,7 +99,7 @@ def merge_api(account, full=False):
             "description":         desc,
         })
         upsert_ledger((
-            iid, sa.upper(), date_c, cat, None, None,
+            iid, account.upper(), date_c, cat, None, None,
             desc, sign_gross, sign_fee, sign_net, "api", 0
         ))
 
@@ -131,10 +131,10 @@ def merge_release(account, full=False):
     new_rows = [r for r in rows if r[0] not in already]
 
     for r in new_rows:
-        sid, date, desc, gross, credit, debit, sa = r
+        sid, date, desc, gross, credit, debit = r
         sign_gross, cat = release_sign({"gross_amount": gross, "description": desc})
         upsert_ledger((
-            sid, sa.upper(), date, cat, None, None,
+            sid, account.upper(), date, cat, None, None,
             desc, sign_gross, 0.0, sign_gross, "release", 0
         ))
 

@@ -372,9 +372,9 @@ def get_all_api_rows(source_account):
     cur.execute(f"""
         SELECT internal_id, date_created, operation_type, description,
                transaction_amount, fee_amount, net_received_amount,
-               collector_id, source_account
+               collector_id
         FROM {tbl}
-    """, )
+    """)
     rows = cur.fetchall()
     conn.close()
     return rows
@@ -387,7 +387,7 @@ def get_all_release_rows(source_account):
     cur = conn.cursor()
     cur.execute(f"""
         SELECT source_id, date, description, gross_amount,
-               net_credit_amount, net_debit_amount, source_account
+               net_credit_amount, net_debit_amount
         FROM {tbl}
     """)
     rows = cur.fetchall()
